@@ -1,57 +1,42 @@
-import os
-import math
-import wandb
-import random
-import logging
-import inspect
 import argparse
 import datetime
+import inspect
+import logging
+import math
+import os
 import subprocess
-
 from pathlib import Path
-from tqdm.auto import tqdm
-from einops import rearrange
-from omegaconf import OmegaConf
-from safetensors import safe_open
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import torch
-import torchvision
-import torch.nn.functional as F
 import torch.distributed as dist
-from torch.optim.swa_utils import AveragedModel
-from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
-
-import diffusers
+import torch.nn.functional as F
+import wandb
 from diffusers import AutoencoderKL, DDIMScheduler
-
-# from diffusers.models import UNet2DConditionModel
-from models.hack_unet2d import Hack_UNet2DConditionModel as UNet2DConditionModel
-
 # from diffusers.pipelines import StableDiffusionPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
-
-import transformers
-from transformers import CLIPTextModel, CLIPTokenizer
+from einops import rearrange
+from omegaconf import OmegaConf
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+from tqdm.auto import tqdm
 
 # from data.dataset import WebVid10M
-from data.dataset import TikTok, collate_fn, UBC_Fashion
-# from models.unet import UNet3DConditionModel
-from models.hack_unet3d import Hack_UNet3DConditionModel as UNet3DConditionModel
-
-# from animatediff.pipelines.pipeline_animation import AnimationPipeline
-from utils.util import save_videos_grid, zero_rank_print
+from data.dataset import collate_fn, UBC_Fashion
 from models.ReferenceEncoder import ReferenceEncoder
-# from models.PoseGuider import PoseGuider
-from models.hack_poseguider import Hack_PoseGuider as PoseGuider
-
 from models.ReferenceNet import ReferenceNet
 from models.ReferenceNet_attention import ReferenceNetAttention
+# from models.PoseGuider import PoseGuider
+from models.hack_poseguider import Hack_PoseGuider as PoseGuider
+# from diffusers.models import UNet2DConditionModel
+from models.hack_unet2d import Hack_UNet2DConditionModel as UNet2DConditionModel
+# from models.unet import UNet3DConditionModel
+from models.hack_unet3d import HackUNet3DConditionModel as UNet3DConditionModel
+# from animatediff.pipelines.pipeline_animation import AnimationPipeline
+from utils.util import zero_rank_print
 
-import pdb
 
 def init_dist(launcher="slurm", backend='nccl', port=28888, **kwargs):
     """Initializes distributed environment."""
@@ -61,7 +46,7 @@ def init_dist(launcher="slurm", backend='nccl', port=28888, **kwargs):
         local_rank = rank % num_gpus
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend=backend, **kwargs)
-        
+
     elif launcher == 'slurm':
         proc_id = int(os.environ['SLURM_PROCID'])
         ntasks = int(os.environ['SLURM_NTASKS'])
@@ -77,11 +62,12 @@ def init_dist(launcher="slurm", backend='nccl', port=28888, **kwargs):
         port = os.environ.get('PORT', port)
         os.environ['MASTER_PORT'] = str(port)
         dist.init_process_group(backend=backend)
-        zero_rank_print(f"proc_id: {proc_id}; local_rank: {local_rank}; ntasks: {ntasks}; node_list: {node_list}; num_gpus: {num_gpus}; addr: {addr}; port: {port}")
-        
+        zero_rank_print(
+            f"proc_id: {proc_id}; local_rank: {local_rank}; ntasks: {ntasks}; node_list: {node_list}; num_gpus: {num_gpus}; addr: {addr}; port: {port}")
+
     else:
         raise NotImplementedError(f'Not implemented launcher type: `{launcher}`!')
-    
+
     return local_rank
 
 
@@ -104,75 +90,72 @@ def get_parameters_without_gradients(model):
 
 
 def main(
-    image_finetune: bool,
-    
-    name: str,
-    use_wandb: bool,
-    launcher: str,
-    
-    output_dir: str,
-    pretrained_model_path: str,
-    clip_model_path:str,
-    description: str,
-    fusion_blocks: str,
-    
-    poseguider_checkpoint_path: str,
-    referencenet_checkpoint_path: str,
-    
-    train_data: Dict,
-    validation_data: Dict,
-    cfg_random_null_text: bool = True,
-    cfg_random_null_text_ratio: float = 0.1,
-    
-    unet_checkpoint_path: str = "",
-    unet_additional_kwargs: Dict = {},
-    ema_decay: float = 0.9999,
-    noise_scheduler_kwargs = None,
-    
-    
-    max_train_epoch: int = -1,
-    max_train_steps: int = 100,
-    validation_steps: int = 100,
-    validation_steps_tuple: Tuple = (-1,),
+        image_finetune: bool,
 
-    learning_rate: float = 3e-5,
-    scale_lr: bool = False,
-    lr_warmup_steps: int = 0,
-    lr_scheduler: str = "constant",
+        name: str,
+        use_wandb: bool,
+        launcher: str,
 
-    trainable_modules: Tuple[str] = (None, ),
-    num_workers: int = 8,
-    train_batch_size: int = 1,
-    adam_beta1: float = 0.9,
-    adam_beta2: float = 0.999,
-    adam_weight_decay: float = 1e-2,
-    adam_epsilon: float = 1e-08,
-    max_grad_norm: float = 1.0,
-    gradient_accumulation_steps: int = 1,
-    gradient_checkpointing: bool = False,
-    checkpointing_epochs: int = 5,
-    checkpointing_steps: int = -1,
+        output_dir: str,
+        pretrained_model_path: str,
+        clip_model_path: str,
+        description: str,
+        fusion_blocks: str,
 
-    mixed_precision_training: bool = True,
-    enable_xformers_memory_efficient_attention: bool = True,
+        poseguider_checkpoint_path: str,
+        referencenet_checkpoint_path: str,
 
-    global_seed: int = 42,
-    is_debug: bool = False,
+        train_data: Dict,
+        validation_data: Dict,
+        cfg_random_null_text: bool = True,
+        cfg_random_null_text_ratio: float = 0.1,
+
+        unet_checkpoint_path: str = "",
+        unet_additional_kwargs: Dict = {},
+        ema_decay: float = 0.9999,
+        noise_scheduler_kwargs=None,
+
+        max_train_epoch: int = -1,
+        max_train_steps: int = 100,
+        validation_steps: int = 100,
+        validation_steps_tuple: Tuple = (-1,),
+
+        learning_rate: float = 3e-5,
+        scale_lr: bool = False,
+        lr_warmup_steps: int = 0,
+        lr_scheduler: str = "constant",
+
+        trainable_modules: Tuple[str] = (None,),
+        num_workers: int = 8,
+        train_batch_size: int = 1,
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_weight_decay: float = 1e-2,
+        adam_epsilon: float = 1e-08,
+        max_grad_norm: float = 1.0,
+        gradient_accumulation_steps: int = 1,
+        gradient_checkpointing: bool = False,
+        checkpointing_epochs: int = 5,
+        checkpointing_steps: int = -1,
+
+        mixed_precision_training: bool = True,
+        enable_xformers_memory_efficient_attention: bool = True,
+
+        global_seed: int = 42,
+        is_debug: bool = False,
 ):
     check_min_version("0.21.4")
 
     # Initialize distributed training
-    local_rank      = init_dist(launcher=launcher, port=28888)
-    global_rank     = dist.get_rank()
-    num_processes   = dist.get_world_size()
+    local_rank = init_dist(launcher=launcher, port=28888)
+    global_rank = dist.get_rank()
+    num_processes = dist.get_world_size()
     # num_processes   = 0
     is_main_process = global_rank == 0
 
     seed = global_seed + global_rank
     torch.manual_seed(seed)
-    
-    
-    
+
     # Logging folder
     folder_name = "debug" if is_debug else name + datetime.datetime.now().strftime("-%Y-%m-%dT%H-%M-%S")
     output_dir = os.path.join(output_dir, folder_name)
@@ -198,13 +181,13 @@ def main(
         os.makedirs(f"{output_dir}/sanity_check", exist_ok=True)
         os.makedirs(f"{output_dir}/checkpoints", exist_ok=True)
         OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
-        
+
         print(description)
 
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDIMScheduler(**OmegaConf.to_container(noise_scheduler_kwargs))
 
-    vae          = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
+    vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
     # tokenizer    = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
     # text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
     clip_image_encoder = ReferenceEncoder(model_path=clip_model_path)
@@ -216,16 +199,14 @@ def main(
         poseguider.load_state_dict(poseguider_state_dict, strict=False)
         referencenet.load_state_dict(referencenet_state_dict, strict=False)
 
-    
-
     if not image_finetune:
         unet = UNet3DConditionModel.from_pretrained_2d(
-            pretrained_model_path, subfolder="unet", 
+            pretrained_model_path, subfolder="unet",
             unet_additional_kwargs=OmegaConf.to_container(unet_additional_kwargs)
         )
         # Note: In train, we load motion_unet from unet_checkpoint_path.
         # So Don't worry about the hint of an unloaded temporal module !!!
-        
+
         # unet = UNet3DConditionModel.from_pretrained_2d(
         #     config.pretrained_motion_unet_path, subfolder=None, 
         #     unet_additional_kwargs=OmegaConf.to_container(unet_additional_kwargs), 
@@ -233,28 +214,31 @@ def main(
     else:
         unet = UNet2DConditionModel.from_pretrained(pretrained_model_path, subfolder="unet")
 
+    reference_control_writer = ReferenceNetAttention(referencenet, do_classifier_free_guidance=False, mode='write',
+                                                     fusion_blocks=fusion_blocks, batch_size=train_batch_size,
+                                                     is_image=image_finetune)
+    reference_control_reader = ReferenceNetAttention(unet, do_classifier_free_guidance=False, mode='read',
+                                                     fusion_blocks=fusion_blocks, batch_size=train_batch_size,
+                                                     is_image=image_finetune)
 
-    reference_control_writer = ReferenceNetAttention(referencenet, do_classifier_free_guidance=False, mode='write', fusion_blocks=fusion_blocks, batch_size=train_batch_size ,is_image=image_finetune)
-    reference_control_reader = ReferenceNetAttention(unet, do_classifier_free_guidance=False, mode='read', fusion_blocks=fusion_blocks, batch_size=train_batch_size ,is_image=image_finetune)
-    
-    
     # Load pretrained unet weights
     if unet_checkpoint_path != "":
         zero_rank_print(f"from checkpoint: {unet_checkpoint_path}")
         unet_checkpoint_path = torch.load(unet_checkpoint_path, map_location="cpu")
         if "global_step" in unet_checkpoint_path: zero_rank_print(f"global_step: {unet_checkpoint_path['global_step']}")
-        state_dict = unet_checkpoint_path["state_dict"] if "state_dict" in unet_checkpoint_path else unet_checkpoint_path
+        state_dict = unet_checkpoint_path[
+            "state_dict"] if "state_dict" in unet_checkpoint_path else unet_checkpoint_path
 
         m, u = unet.load_state_dict(state_dict, strict=True)
         zero_rank_print(f"missing keys: {len(m)}, unexpected keys: {len(u)}")
         del state_dict
         assert len(u) == 0
-        
+
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
     # text_encoder.requires_grad_(False)
     clip_image_encoder.requires_grad_(False)
-    
+
     # Set unet trainable parameters
     unet.requires_grad_(False)
     # unet.requires_grad_(True)
@@ -264,23 +248,22 @@ def main(
                 # print(trainable_module_name)
                 param.requires_grad = True
                 break
-    
+
     if image_finetune:
         poseguider.requires_grad_(True)
         referencenet.requires_grad_(True)
     else:
         poseguider.requires_grad_(False)
-        referencenet.requires_grad_(False)    
-                   
-    
+        referencenet.requires_grad_(False)
+
     trainable_params = list(filter(lambda p: p.requires_grad, unet.parameters()))
     if image_finetune:
         trainable_params += list(filter(lambda p: p.requires_grad, poseguider.parameters())) + \
-                   list(filter(lambda p: p.requires_grad, referencenet.parameters()))
-    
+                            list(filter(lambda p: p.requires_grad, referencenet.parameters()))
+
     # print(len(trainable_params))
     # exit(0)
-    
+
     optimizer = torch.optim.AdamW(
         trainable_params,
         lr=learning_rate,
@@ -317,7 +300,7 @@ def main(
     # train_dataset = WebVid10M(**train_data, is_image=image_finetune)
     # train_dataset = TikTok(**train_data, is_image=image_finetune)
     train_dataset = UBC_Fashion(**train_data, is_image=image_finetune)
-    
+
     distributed_sampler = DistributedSampler(
         train_dataset,
         num_replicas=num_processes,
@@ -342,7 +325,7 @@ def main(
     if max_train_steps == -1:
         assert max_train_epoch != -1
         max_train_steps = max_train_epoch * len(train_dataloader)
-        
+
     if checkpointing_steps == -1:
         assert checkpointing_epochs != -1
         checkpointing_steps = checkpointing_epochs * len(train_dataloader)
@@ -373,7 +356,7 @@ def main(
     # DDP warpper
     unet.to(local_rank)
     unet = DDP(unet, device_ids=[local_rank], output_device=local_rank)
-    
+
     if image_finetune:
         poseguider = DDP(poseguider, device_ids=[local_rank], output_device=local_rank)
         referencenet = DDP(referencenet, device_ids=[local_rank], output_device=local_rank)
@@ -409,13 +392,12 @@ def main(
         unet.train()
         poseguider.train()
         referencenet.train()
-        
-        
+
         for step, batch in enumerate(train_dataloader):
             # ToDo: add cfg_random_null_image to strength cfg
             # if cfg_random_null_text:
             #     batch['text'] = [name if random.random() > cfg_random_null_text_ratio else "" for name in batch['text']]
-                
+
             # # Data batch sanity check
             # if epoch == first_epoch and step == 0:
             #     pixel_values, texts = batch['pixel_values'].cpu(), batch['text']
@@ -428,17 +410,17 @@ def main(
             #         for idx, (pixel_value, text) in enumerate(zip(pixel_values, texts)):
             #             pixel_value = pixel_value / 2. + 0.5
             #             torchvision.utils.save_image(pixel_value, f"{output_dir}/sanity_check/{'-'.join(text.replace('/', '').split()[:10]) if not text == '' else f'{global_rank}-{idx}'}.png")
-                    
+
             ### >>>> Training >>>> ###
-            
+
             # Convert videos to latent space            
             pixel_values = batch["pixel_values"].to(local_rank)
             pixel_values_pose = batch["pixel_values_pose"].to(local_rank)
             clip_ref_image = batch["clip_ref_image"].to(local_rank)
             pixel_values_ref_img = batch["pixel_values_ref_img"].to(local_rank)
-            drop_image_embeds = batch["drop_image_embeds"].to(local_rank) # torch.Size([bs])
+            drop_image_embeds = batch["drop_image_embeds"].to(local_rank)  # torch.Size([bs])
             video_length = pixel_values.shape[1]
-            
+
             with torch.no_grad():
                 if not image_finetune:
                     pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
@@ -449,7 +431,7 @@ def main(
                     latents = vae.encode(pixel_values).latent_dist
                     latents = latents.sample()
                 latents = latents * 0.18215
-                
+
                 latents_ref_img = vae.encode(pixel_values_ref_img).latent_dist
                 latents_ref_img = latents_ref_img.sample()
                 latents_ref_img = latents_ref_img * 0.18215
@@ -457,44 +439,43 @@ def main(
             # Sample noise that we'll add to the latents
             noise = torch.randn_like(latents)
             bsz = latents.shape[0]
-            
+
             # Sample a random timestep for each video
             timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
             timesteps = timesteps.long()
-            
+
             # Add noise to the latents according to the noise magnitude at each timestep
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-            
-            
+
             if not image_finetune:
                 pixel_values_pose = rearrange(pixel_values_pose, "b f c h w -> (b f) c h w")
                 latents_pose = poseguider(pixel_values_pose)
                 latents_pose = rearrange(latents_pose, "(b f) c h w -> b c f h w", f=video_length)
             else:
                 latents_pose = poseguider(pixel_values_pose)
-            
+
             # if is_main_process:
             #     print(f"step {step}")
             #     print("pose_guider's min max mean std: ",latents_pose.min().item(),latents_pose.max().item(),latents_pose.mean().item(),latents_pose.std().item())
             #     print("noisy_latents's min max mean std: ",noisy_latents.min().item(),noisy_latents.max().item(),noisy_latents.mean().item(),noisy_latents.std().item())
 
             # noisy_latents = noisy_latents + latents_pose
-            
+
             # Get the text embedding for conditioning
             with torch.no_grad():
                 # prompt_ids = tokenizer(
                 #     batch['text'], max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
                 # ).input_ids.to(latents.device)
                 # encoder_hidden_states = text_encoder(prompt_ids)[0]
-                encoder_hidden_states = clip_image_encoder(clip_ref_image).unsqueeze(1) # [bs,1,768]
-            
+                encoder_hidden_states = clip_image_encoder(clip_ref_image).unsqueeze(1)  # [bs,1,768]
+
             # support cfg train
             mask = drop_image_embeds > 0
             mask = mask.unsqueeze(1).unsqueeze(2).expand_as(encoder_hidden_states)
             encoder_hidden_states[mask] = 0
 
             # pdb.set_trace()
-            
+
             # Get the target for loss depending on the prediction type
             if noise_scheduler.config.prediction_type == "epsilon":
                 target = noise
@@ -507,16 +488,16 @@ def main(
             # Mixed-precision training
             with torch.cuda.amp.autocast(enabled=mixed_precision_training):
                 ref_timesteps = torch.zeros_like(timesteps)
-                
+
                 # pdb.set_trace()
-                
+
                 referencenet(latents_ref_img, ref_timesteps, encoder_hidden_states)
                 reference_control_reader.update(reference_control_writer)
-                
-                model_pred = unet(sample=noisy_latents, timestep=timesteps, encoder_hidden_states=encoder_hidden_states, latent_pose=latents_pose).sample
+
+                model_pred = unet(sample=noisy_latents, timestep=timesteps, encoder_hidden_states=encoder_hidden_states,
+                                  latent_pose=latents_pose).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-                
-                
+
             optimizer.zero_grad()
 
             # Backpropagate
@@ -530,14 +511,14 @@ def main(
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                loss.backward()                
+                loss.backward()
                 # no_grad_params_poseguider = get_parameters_without_gradients(poseguider)
                 # no_grad_params_referencenet = get_parameters_without_gradients(referencenet)
                 # if len(no_grad_params_poseguider) != 0:
                 #     print("PoseGuider no grad params:", no_grad_params_poseguider)
                 # if len(no_grad_params_referencenet) != 0:
                 #     print("ReferenceNet no grad params:", no_grad_params_referencenet)
-                
+
                 """ >>> gradient clipping >>> """
                 # torch.nn.utils.clip_grad_norm_(unet.parameters(), max_grad_norm)
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
@@ -546,20 +527,20 @@ def main(
 
             lr_scheduler.step()
             progress_bar.update(1)
-            
+
             reference_control_reader.clear()
             reference_control_writer.clear()
             global_step += 1
-            
+
             ### <<<< Training <<<< ###
-            
+
             # Wandb logging
             if is_main_process and (not is_debug) and use_wandb:
                 wandb.log({"train_loss": loss.item()}, step=global_step)
-                
+
             # Save checkpoint
             # if is_main_process and (global_step % checkpointing_steps == 0 or step == len(train_dataloader) - 1):
-            if is_main_process and global_step % checkpointing_steps == 0 :
+            if is_main_process and global_step % checkpointing_steps == 0:
                 save_path = os.path.join(output_dir, f"checkpoints")
                 if image_finetune:
                     state_dict = {
@@ -568,7 +549,7 @@ def main(
                         "unet_state_dict": unet.module.state_dict(),
                         "poseguider_state_dict": poseguider.module.state_dict(),
                         "referencenet_state_dict": referencenet.module.state_dict(),
-                        
+
                     }
                 else:
                     state_dict = {
@@ -576,20 +557,20 @@ def main(
                         "global_step": global_step,
                         "unet_state_dict": unet.module.state_dict(),
                     }
-                
+
                 if step == len(train_dataloader) - 1:
-                    torch.save(state_dict, os.path.join(save_path, f"checkpoint-epoch-{epoch+1}.ckpt"))
+                    torch.save(state_dict, os.path.join(save_path, f"checkpoint-epoch-{epoch + 1}.ckpt"))
                 else:
                     torch.save(state_dict, os.path.join(save_path, f"checkpoint-global_step-{global_step}.ckpt"))
                 logging.info(f"Saved state to {save_path} (global_step: {global_step})")
-                
+
             # # Periodically validation
             # if is_main_process and (global_step % validation_steps == 0 or global_step in validation_steps_tuple):
             #     samples = []
-                
+
             #     generator = torch.Generator(device=latents.device)
             #     generator.manual_seed(global_seed)
-                
+
             #     height = train_data.sample_size[0] if not isinstance(train_data.sample_size, int) else train_data.sample_size
             #     width  = train_data.sample_size[1] if not isinstance(train_data.sample_size, int) else train_data.sample_size
 
@@ -607,7 +588,7 @@ def main(
             #             ).videos
             #             save_videos_grid(sample, f"{output_dir}/samples/sample-{global_step}/{idx}.gif")
             #             samples.append(sample)
-                        
+
             #         else:
             #             sample = validation_pipeline(
             #                 prompt,
@@ -619,41 +600,39 @@ def main(
             #             ).images[0]
             #             sample = torchvision.transforms.functional.to_tensor(sample)
             #             samples.append(sample)
-                
-                # if not image_finetune:
-                #     samples = torch.concat(samples)
-                #     save_path = f"{output_dir}/samples/sample-{global_step}.gif"
-                #     save_videos_grid(samples, save_path)
-                    
-                # else:
-                #     samples = torch.stack(samples)
-                #     save_path = f"{output_dir}/samples/sample-{global_step}.png"
-                #     torchvision.utils.save_image(samples, save_path, nrow=4)
 
-                # logging.info(f"Saved samples to {save_path}")
-                
+            # if not image_finetune:
+            #     samples = torch.concat(samples)
+            #     save_path = f"{output_dir}/samples/sample-{global_step}.gif"
+            #     save_videos_grid(samples, save_path)
+
+            # else:
+            #     samples = torch.stack(samples)
+            #     save_path = f"{output_dir}/samples/sample-{global_step}.png"
+            #     torchvision.utils.save_image(samples, save_path, nrow=4)
+
+            # logging.info(f"Saved samples to {save_path}")
+
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
-            
+
             if global_step >= max_train_steps:
                 break
-            
-    dist.destroy_process_group()
 
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config",   type=str, required=True)
+    parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--launcher", type=str, choices=["pytorch", "slurm"], default="pytorch")
-    parser.add_argument("--wandb",    action="store_true")
+    parser.add_argument("--wandb", action="store_true")
     args = parser.parse_args()
 
-    name   = Path(args.config).stem
+    name = Path(args.config).stem
     config = OmegaConf.load(args.config)
 
     main(name=name, launcher=args.launcher, use_wandb=args.wandb, **config)
-    
 
     # CUDA_VISIBLE_DEVICES=1 torchrun --nnodes=1 --nproc_per_node=1 train_hack.py --config configs/training/train_stage_1_oneshot.yaml
     # CUDA_VISIBLE_DEVICES=2,3 torchrun --nnodes=1 --nproc_per_node=2 --master_port 28888 train_hack.py --config configs/training/train_stage_1.yaml
@@ -661,7 +640,6 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=3,5,6,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port 28887 train_hack.py --config configs/training/train_stage_1.yaml
 
     # CUDA_VISIBLE_DEVICES=7 torchrun --nnodes=1 --nproc_per_node=1 train_hack.py --config configs/training/train_stage_2.yaml
-
 
     # CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port 28887 train_hack.py --config configs/training/train_stage_2.yaml
     # CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --nnodes=1 --nproc_per_node=4 --master_port 28887 train_hack.py --config configs/training/train_stage_1_hack.yaml

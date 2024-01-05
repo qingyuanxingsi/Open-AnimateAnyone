@@ -11,16 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
-import os
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
-from diffusers.utils import BaseOutput, logging
 from diffusers.models.activations import get_activation
 from diffusers.models.attention_processor import (
     ADDED_KV_ATTENTION_PROCESSORS,
@@ -29,7 +28,6 @@ from diffusers.models.attention_processor import (
     AttnAddedKVProcessor,
     AttnProcessor,
 )
-from diffusers.models.lora import LoRALinearLayer
 from diffusers.models.embeddings import (
     GaussianFourierProjection,
     ImageHintTimeEmbedding,
@@ -42,6 +40,7 @@ from diffusers.models.embeddings import (
     TimestepEmbedding,
     Timesteps,
 )
+from diffusers.models.lora import LoRALinearLayer
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.unet_2d_blocks import (
     UNetMidBlock2DCrossAttn,
@@ -49,7 +48,7 @@ from diffusers.models.unet_2d_blocks import (
     get_down_block,
     get_up_block,
 )
-
+from diffusers.utils import BaseOutput, logging
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -74,12 +73,12 @@ class Identity(torch.nn.Module):
         torch.Size([128, 20])
 
     """
+
     def __init__(self, scale=None, *args, **kwargs) -> None:
         super(Identity, self).__init__()
 
     def forward(self, input, *args, **kwargs):
         return input
-
 
 
 class _LoRACompatibleLinear(nn.Module):
@@ -209,58 +208,59 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
 
     @register_to_config
     def __init__(
-        self,
-        sample_size: Optional[int] = None,
-        in_channels: int = 4,
-        out_channels: int = 4,
-        center_input_sample: bool = False,
-        flip_sin_to_cos: bool = True,
-        freq_shift: int = 0,
-        down_block_types: Tuple[str] = (
-            "CrossAttnDownBlock2D",
-            "CrossAttnDownBlock2D",
-            "CrossAttnDownBlock2D",
-            "DownBlock2D",
-        ),
-        mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn",
-        up_block_types: Tuple[str] = ("UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"),
-        only_cross_attention: Union[bool, Tuple[bool]] = False,
-        block_out_channels: Tuple[int] = (320, 640, 1280, 1280),
-        layers_per_block: Union[int, Tuple[int]] = 2,
-        downsample_padding: int = 1,
-        mid_block_scale_factor: float = 1,
-        act_fn: str = "silu",
-        norm_num_groups: Optional[int] = 32,
-        norm_eps: float = 1e-5,
-        cross_attention_dim: Union[int, Tuple[int]] = 1280,
-        transformer_layers_per_block: Union[int, Tuple[int]] = 1,
-        encoder_hid_dim: Optional[int] = None,
-        encoder_hid_dim_type: Optional[str] = None,
-        attention_head_dim: Union[int, Tuple[int]] = 8,
-        num_attention_heads: Optional[Union[int, Tuple[int]]] = None,
-        dual_cross_attention: bool = False,
-        use_linear_projection: bool = False,
-        class_embed_type: Optional[str] = None,
-        addition_embed_type: Optional[str] = None,
-        addition_time_embed_dim: Optional[int] = None,
-        num_class_embeds: Optional[int] = None,
-        upcast_attention: bool = False,
-        resnet_time_scale_shift: str = "default",
-        resnet_skip_time_act: bool = False,
-        resnet_out_scale_factor: int = 1.0,
-        time_embedding_type: str = "positional",
-        time_embedding_dim: Optional[int] = None,
-        time_embedding_act_fn: Optional[str] = None,
-        timestep_post_act: Optional[str] = None,
-        time_cond_proj_dim: Optional[int] = None,
-        conv_in_kernel: int = 3,
-        conv_out_kernel: int = 3,
-        projection_class_embeddings_input_dim: Optional[int] = None,
-        attention_type: str = "default",
-        class_embeddings_concat: bool = False,
-        mid_block_only_cross_attention: Optional[bool] = None,
-        cross_attention_norm: Optional[str] = None,
-        addition_embed_type_num_heads=64,
+            self,
+            sample_size: Optional[int] = None,
+            in_channels: int = 4,
+            out_channels: int = 4,
+            center_input_sample: bool = False,
+            flip_sin_to_cos: bool = True,
+            freq_shift: int = 0,
+            down_block_types: Tuple[str] = (
+                    "CrossAttnDownBlock2D",
+                    "CrossAttnDownBlock2D",
+                    "CrossAttnDownBlock2D",
+                    "DownBlock2D",
+            ),
+            mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn",
+            up_block_types: Tuple[str] = (
+            "UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"),
+            only_cross_attention: Union[bool, Tuple[bool]] = False,
+            block_out_channels: Tuple[int] = (320, 640, 1280, 1280),
+            layers_per_block: Union[int, Tuple[int]] = 2,
+            downsample_padding: int = 1,
+            mid_block_scale_factor: float = 1,
+            act_fn: str = "silu",
+            norm_num_groups: Optional[int] = 32,
+            norm_eps: float = 1e-5,
+            cross_attention_dim: Union[int, Tuple[int]] = 1280,
+            transformer_layers_per_block: Union[int, Tuple[int]] = 1,
+            encoder_hid_dim: Optional[int] = None,
+            encoder_hid_dim_type: Optional[str] = None,
+            attention_head_dim: Union[int, Tuple[int]] = 8,
+            num_attention_heads: Optional[Union[int, Tuple[int]]] = None,
+            dual_cross_attention: bool = False,
+            use_linear_projection: bool = False,
+            class_embed_type: Optional[str] = None,
+            addition_embed_type: Optional[str] = None,
+            addition_time_embed_dim: Optional[int] = None,
+            num_class_embeds: Optional[int] = None,
+            upcast_attention: bool = False,
+            resnet_time_scale_shift: str = "default",
+            resnet_skip_time_act: bool = False,
+            resnet_out_scale_factor: int = 1.0,
+            time_embedding_type: str = "positional",
+            time_embedding_dim: Optional[int] = None,
+            time_embedding_act_fn: Optional[str] = None,
+            timestep_post_act: Optional[str] = None,
+            time_cond_proj_dim: Optional[int] = None,
+            conv_in_kernel: int = 3,
+            conv_out_kernel: int = 3,
+            projection_class_embeddings_input_dim: Optional[int] = None,
+            attention_type: str = "default",
+            class_embeddings_concat: bool = False,
+            mid_block_only_cross_attention: Optional[bool] = None,
+            cross_attention_norm: Optional[str] = None,
+            addition_embed_type_num_heads=64,
     ):
         super().__init__()
 
@@ -605,7 +605,6 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
 
-        
         # # out
         # if norm_num_groups is not None:
         #     self.conv_norm_out = nn.GroupNorm(
@@ -622,7 +621,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
         # self.conv_out = nn.Conv2d(
         #     block_out_channels[0], out_channels, kernel_size=conv_out_kernel, padding=conv_out_padding
         # )
-        
+
         # Diff vs diffusers-0.21.4/src/diffusers/models/unet_2d_condition.py
         # skip last cross attention for slight acceleration and for DDP training
         # The following parameters (cross-attention for the last layer) 
@@ -674,7 +673,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
         return processors
 
     def set_attn_processor(
-        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
+            self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
     ):
         r"""
         Sets the attention processor to use to compute attention.
@@ -794,19 +793,19 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
             module.gradient_checkpointing = value
 
     def forward(
-        self,
-        sample: torch.FloatTensor,
-        timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
-        class_labels: Optional[torch.Tensor] = None,
-        timestep_cond: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
-        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
-        mid_block_additional_residual: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        return_dict: bool = True,
+            self,
+            sample: torch.FloatTensor,
+            timestep: Union[torch.Tensor, float, int],
+            encoder_hidden_states: torch.Tensor,
+            class_labels: Optional[torch.Tensor] = None,
+            timestep_cond: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+            added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
+            down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
+            mid_block_additional_residual: Optional[torch.Tensor] = None,
+            encoder_attention_mask: Optional[torch.Tensor] = None,
+            return_dict: bool = True,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         The [`UNet2DConditionModel`] forward method.
@@ -839,7 +838,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
         # However, the upsampling interpolation output size can be forced to fit any upsampling size
         # on the fly if necessary.
-        default_overall_up_factor = 2**self.num_upsamplers
+        default_overall_up_factor = 2 ** self.num_upsamplers
 
         # upsample size should be forwarded when sample is not a multiple of `default_overall_up_factor`
         forward_upsample_size = False
@@ -1023,7 +1022,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
             new_down_block_res_samples = ()
 
             for down_block_res_sample, down_block_additional_residual in zip(
-                down_block_res_samples, down_block_additional_residuals
+                    down_block_res_samples, down_block_additional_residuals
             ):
                 down_block_res_sample = down_block_res_sample + down_block_additional_residual
                 new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
@@ -1042,9 +1041,9 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
             )
             # To support T2I-Adapter-XL
             if (
-                is_adapter
-                and len(down_block_additional_residuals) > 0
-                and sample.shape == down_block_additional_residuals[0].shape
+                    is_adapter
+                    and len(down_block_additional_residuals) > 0
+                    and sample.shape == down_block_additional_residuals[0].shape
             ):
                 sample += down_block_additional_residuals.pop(0)
 
@@ -1055,7 +1054,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
-            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            res_samples = down_block_res_samples[-len(upsample_block.resnets):]
             down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
 
             # if we have not reached the final block and need to forward the
@@ -1086,7 +1085,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
             return (sample,)
 
         return UNet2DConditionOutput(sample=sample)
-    
+
     @classmethod
     def load_referencenet(cls, pretrained_model_path):
         print(f"loaded ReferenceNet's pretrained weights from {pretrained_model_path} ...")
@@ -1127,7 +1126,7 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
         model = cls.from_config(config)
         # model_file = os.path.join(pretrained_model_path, WEIGHTS_NAME)
         model_file = pretrained_model_path
-        
+
         if not os.path.isfile(model_file):
             raise RuntimeError(f"{model_file} does not exist")
         state_dict = torch.load(model_file, map_location="cpu")
@@ -1136,11 +1135,11 @@ class ReferenceNet(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
         if m or u:
             print(f"### missing keys: {len(m)}; \n### unexpected keys: {len(u)};")
             print(f"### missing keys:\n{m}\n### unexpected keys:\n{u}\n")
-        
+
         # params = [p.numel() for n, p in model.named_parameters() if "2D" in n]
         # print(f"### 2D Module Parameters: {sum(params) / 1e6} M")
-        
+
         params = [p.numel() for n, p in model.named_parameters()]
         print(f"### Module Parameters: {sum(params) / 1e6} M")
-        
+
         return model

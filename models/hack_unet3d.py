@@ -1,23 +1,22 @@
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 import torch.utils.checkpoint
 
 from models.unet import UNet3DConditionModel, UNet3DConditionOutput, logger
 
-class Hack_UNet3DConditionModel(UNet3DConditionModel):
-    def forward(
-        self,
-        sample: torch.FloatTensor,
-        timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
-        latent_pose: torch.Tensor, # new add
 
-        class_labels: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        return_dict: bool = True,
+class HackUNet3DConditionModel(UNet3DConditionModel):
+    def forward(
+            self,
+            sample: torch.FloatTensor,
+            timestep: Union[torch.Tensor, float, int],
+            encoder_hidden_states: torch.Tensor,
+            latent_pose: torch.Tensor,  # new add
+
+            class_labels: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            return_dict: bool = True,
     ) -> Union[UNet3DConditionOutput, Tuple]:
         r"""
         Args:
@@ -36,7 +35,7 @@ class Hack_UNet3DConditionModel(UNet3DConditionModel):
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layears).
         # However, the upsampling interpolation output size can be forced to fit any upsampling size
         # on the fly if necessary.
-        default_overall_up_factor = 2**self.num_upsamplers
+        default_overall_up_factor = 2 ** self.num_upsamplers
 
         # upsample size should be forwarded when sample is not a multiple of `default_overall_up_factor`
         forward_upsample_size = False
@@ -106,7 +105,8 @@ class Hack_UNet3DConditionModel(UNet3DConditionModel):
                     attention_mask=attention_mask,
                 )
             else:
-                sample, res_samples = downsample_block(hidden_states=sample, temb=emb, encoder_hidden_states=encoder_hidden_states)
+                sample, res_samples = downsample_block(hidden_states=sample, temb=emb,
+                                                       encoder_hidden_states=encoder_hidden_states)
 
             down_block_res_samples += res_samples
 
@@ -119,7 +119,7 @@ class Hack_UNet3DConditionModel(UNet3DConditionModel):
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
-            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            res_samples = down_block_res_samples[-len(upsample_block.resnets):]
             down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
 
             # if we have not reached the final block and need to forward the
@@ -138,7 +138,8 @@ class Hack_UNet3DConditionModel(UNet3DConditionModel):
                 )
             else:
                 sample = upsample_block(
-                    hidden_states=sample, temb=emb, res_hidden_states_tuple=res_samples, upsample_size=upsample_size, encoder_hidden_states=encoder_hidden_states,
+                    hidden_states=sample, temb=emb, res_hidden_states_tuple=res_samples, upsample_size=upsample_size,
+                    encoder_hidden_states=encoder_hidden_states,
                 )
 
         # post-process

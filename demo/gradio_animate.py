@@ -1,19 +1,19 @@
 # adapt from https://github.com/magic-research/magic-animate/blob/main/demo/gradio_animate.py
-import argparse
+import gradio as gr
 import imageio
 import numpy as np
-import gradio as gr
 from PIL import Image
 
 from demo.animate import AnimateAnyone
 
 animator = AnimateAnyone()
 
+
 def animate(reference_image, motion_sequence_state, seed, steps, guidance_scale):
     return animator(reference_image, motion_sequence_state, seed, steps, guidance_scale)
 
-with gr.Blocks() as demo:
 
+with gr.Blocks() as demo:
     gr.HTML(
         """
         <div style="display: flex; justify-content: center; align-items: center; text-align: center;">
@@ -27,25 +27,28 @@ with gr.Blocks() as demo:
         </div>
         """)
     animation = gr.Video(format="mp4", label="Animation Results", autoplay=True)
-    
+
     with gr.Row():
-        reference_image  = gr.Image(label="Reference Image")
-        motion_sequence  = gr.Video(format="mp4", label="Motion Sequence")
-        
+        reference_image = gr.Image(label="Reference Image")
+        motion_sequence = gr.Video(format="mp4", label="Motion Sequence")
+
         with gr.Column():
-            random_seed         = gr.Textbox(label="Random seed", value=1, info="default: -1")
-            sampling_steps      = gr.Textbox(label="Sampling steps", value=25, info="default: 25")
-            guidance_scale      = gr.Textbox(label="Guidance scale", value=7.5, info="default: 7.5")
-            submit              = gr.Button("Animate")
+            random_seed = gr.Textbox(label="Random seed", value=1, info="default: -1")
+            sampling_steps = gr.Textbox(label="Sampling steps", value=25, info="default: 25")
+            guidance_scale = gr.Textbox(label="Guidance scale", value=7.5, info="default: 7.5")
+            submit = gr.Button("Animate")
+
 
     def read_video(video):
         reader = imageio.get_reader(video)
         fps = reader.get_meta_data()['fps']
         return video
-    
+
+
     def read_image(image, size=512):
         return np.array(Image.fromarray(image).resize((size, size)))
-    
+
+
     # when user uploads a new video
     motion_sequence.upload(
         read_video,
@@ -61,7 +64,7 @@ with gr.Blocks() as demo:
     # when the `submit` button is clicked
     submit.click(
         animate,
-        [reference_image, motion_sequence, random_seed, sampling_steps, guidance_scale], 
+        [reference_image, motion_sequence, random_seed, sampling_steps, guidance_scale],
         animation
     )
 
@@ -89,7 +92,6 @@ with gr.Blocks() as demo:
         inputs=[reference_image, motion_sequence],
         outputs=animation,
     )
-
 
 demo.launch(share=False)
 

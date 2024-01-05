@@ -21,17 +21,15 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
-from torch import nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.models.attention import Attention as CrossAttention
+from diffusers.models.attention import FeedForward, AdaLayerNorm
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput
 from diffusers.utils.import_utils import is_xformers_available
-from diffusers.models.attention import FeedForward, AdaLayerNorm
-from diffusers.models.attention import Attention as CrossAttention
-
 from einops import rearrange, repeat
+from torch import nn
+
 
 @dataclass
 class Transformer3DModelOutput(BaseOutput):
@@ -48,23 +46,23 @@ else:
 class Transformer3DModel(ModelMixin, ConfigMixin):
     @register_to_config
     def __init__(
-        self,
-        num_attention_heads: int = 16,
-        attention_head_dim: int = 88,
-        in_channels: Optional[int] = None,
-        num_layers: int = 1,
-        dropout: float = 0.0,
-        norm_num_groups: int = 32,
-        cross_attention_dim: Optional[int] = None,
-        attention_bias: bool = False,
-        activation_fn: str = "geglu",
-        num_embeds_ada_norm: Optional[int] = None,
-        use_linear_projection: bool = False,
-        only_cross_attention: bool = False,
-        upcast_attention: bool = False,
+            self,
+            num_attention_heads: int = 16,
+            attention_head_dim: int = 88,
+            in_channels: Optional[int] = None,
+            num_layers: int = 1,
+            dropout: float = 0.0,
+            norm_num_groups: int = 32,
+            cross_attention_dim: Optional[int] = None,
+            attention_bias: bool = False,
+            activation_fn: str = "geglu",
+            num_embeds_ada_norm: Optional[int] = None,
+            use_linear_projection: bool = False,
+            only_cross_attention: bool = False,
+            upcast_attention: bool = False,
 
-        unet_use_cross_frame_attention=None,
-        unet_use_temporal_attention=None,
+            unet_use_cross_frame_attention=None,
+            unet_use_temporal_attention=None,
     ):
         super().__init__()
         self.use_linear_projection = use_linear_projection
@@ -163,20 +161,20 @@ class Transformer3DModel(ModelMixin, ConfigMixin):
 
 class BasicTransformerBlock(nn.Module):
     def __init__(
-        self,
-        dim: int,
-        num_attention_heads: int,
-        attention_head_dim: int,
-        dropout=0.0,
-        cross_attention_dim: Optional[int] = None,
-        activation_fn: str = "geglu",
-        num_embeds_ada_norm: Optional[int] = None,
-        attention_bias: bool = False,
-        only_cross_attention: bool = False,
-        upcast_attention: bool = False,
+            self,
+            dim: int,
+            num_attention_heads: int,
+            attention_head_dim: int,
+            dropout=0.0,
+            cross_attention_dim: Optional[int] = None,
+            activation_fn: str = "geglu",
+            num_embeds_ada_norm: Optional[int] = None,
+            attention_bias: bool = False,
+            only_cross_attention: bool = False,
+            upcast_attention: bool = False,
 
-        unet_use_cross_frame_attention = None,
-        unet_use_temporal_attention = None,
+            unet_use_cross_frame_attention=None,
+            unet_use_temporal_attention=None,
     ):
         super().__init__()
         self.only_cross_attention = only_cross_attention
@@ -230,7 +228,7 @@ class BasicTransformerBlock(nn.Module):
         self.ff = FeedForward(dim, dropout=dropout, activation_fn=activation_fn)
         self.norm3 = nn.LayerNorm(dim)
         self.use_ada_layer_norm_zero = False
-        
+
         # Temp-Attn
         assert unet_use_temporal_attention is not None
         if unet_use_temporal_attention:
@@ -245,7 +243,8 @@ class BasicTransformerBlock(nn.Module):
             nn.init.zeros_(self.attn_temp.to_out[0].weight.data)
             self.norm_temp = AdaLayerNorm(dim, num_embeds_ada_norm) if self.use_ada_layer_norm else nn.LayerNorm(dim)
 
-    def set_use_memory_efficient_attention_xformers(self, use_memory_efficient_attention_xformers: bool, *args, **kwargs):
+    def set_use_memory_efficient_attention_xformers(self, use_memory_efficient_attention_xformers: bool, *args,
+                                                    **kwargs):
         if not is_xformers_available():
             print("Here is how to install it")
             raise ModuleNotFoundError(
@@ -288,7 +287,8 @@ class BasicTransformerBlock(nn.Module):
 
         # pdb.set_trace()
         if self.unet_use_cross_frame_attention:
-            hidden_states = self.attn1(norm_hidden_states, attention_mask=attention_mask, video_length=video_length) + hidden_states
+            hidden_states = self.attn1(norm_hidden_states, attention_mask=attention_mask,
+                                       video_length=video_length) + hidden_states
         else:
             hidden_states = self.attn1(norm_hidden_states, attention_mask=attention_mask) + hidden_states
 
@@ -298,10 +298,10 @@ class BasicTransformerBlock(nn.Module):
                 self.norm2(hidden_states, timestep) if self.use_ada_layer_norm else self.norm2(hidden_states)
             )
             hidden_states = (
-                self.attn2(
-                    norm_hidden_states, encoder_hidden_states=encoder_hidden_states, attention_mask=attention_mask
-                )
-                + hidden_states
+                    self.attn2(
+                        norm_hidden_states, encoder_hidden_states=encoder_hidden_states, attention_mask=attention_mask
+                    )
+                    + hidden_states
             )
 
         # Feed-forward

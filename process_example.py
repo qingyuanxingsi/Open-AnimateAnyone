@@ -1,6 +1,8 @@
-import cv2
 import os
 import shutil
+
+import cv2
+
 
 def extract_first_frame(input_file, output_folder):
     if not os.path.exists(output_folder):
@@ -23,6 +25,7 @@ def extract_first_frame(input_file, output_folder):
 
     cap.release()
 
+
 def copy_video(input_file, target_folder):
     if not os.path.exists(target_folder):
         os.makedirs(target_folder)
@@ -34,8 +37,7 @@ def copy_video(input_file, target_folder):
 
 
 output_folder = "inputs/applications/source_image"
-copy_target_folder = "inputs/applications/driving/dwpose" 
-
+copy_target_folder = "inputs/applications/driving/dwpose"
 
 video_name = "91-9wEBqAlS.mp4"
 video_name = "91C+rpudhdS.mp4"
@@ -45,8 +47,6 @@ video_name = "A11UTfKe+tS.mp4"
 
 input_video_1 = "UBC_dataset/train/" + video_name
 input_video_2 = "UBC_dataset/train_dwpose/" + video_name
-
-
 
 copy_video(input_video_2, copy_target_folder)
 extract_first_frame(input_video_1, output_folder)

@@ -5,12 +5,14 @@
 # 4th Edited by ControlNet (added face and correct hands)
 
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import torch
 import numpy as np
 from . import util
 from .wholebody import Wholebody
+
 
 def draw_pose(pose, H, W):
     bodies = pose['bodies']
@@ -42,26 +44,26 @@ class DWposeDetector:
             nums, keys, locs = candidate.shape
             candidate[..., 0] /= float(W)
             candidate[..., 1] /= float(H)
-            body = candidate[:,:18].copy()
-            body = body.reshape(nums*18, locs)
-            score = subset[:,:18]
+            body = candidate[:, :18].copy()
+            body = body.reshape(nums * 18, locs)
+            score = subset[:, :18]
             for i in range(len(score)):
                 for j in range(len(score[i])):
                     if score[i][j] > 0.3:
-                        score[i][j] = int(18*i+j)
+                        score[i][j] = int(18 * i + j)
                     else:
                         score[i][j] = -1
 
-            un_visible = subset<0.3
+            un_visible = subset < 0.3
             candidate[un_visible] = -1
 
-            foot = candidate[:,18:24]
+            foot = candidate[:, 18:24]
 
-            faces = candidate[:,24:92]
+            faces = candidate[:, 24:92]
 
-            hands = candidate[:,92:113]
-            hands = np.vstack([hands, candidate[:,113:]])
-            
+            hands = candidate[:, 92:113]
+            hands = np.vstack([hands, candidate[:, 113:]])
+
             bodies = dict(candidate=body, subset=score)
             pose = dict(bodies=bodies, hands=hands, faces=faces)
 

@@ -1,30 +1,28 @@
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 import torch.utils.checkpoint
 # from diffusers import UNet2DConditionModel
-from diffusers.models.unet_2d_condition import UNet2DConditionModel,UNet2DConditionOutput,logger
+from diffusers.models.unet_2d_condition import UNet2DConditionModel, UNet2DConditionOutput, logger
 
 
 class Hack_UNet2DConditionModel(UNet2DConditionModel):
     def forward(
-        self,
-        sample: torch.FloatTensor,
-        timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
-        latent_pose: torch.Tensor, # new add
+            self,
+            sample: torch.FloatTensor,
+            timestep: Union[torch.Tensor, float, int],
+            encoder_hidden_states: torch.Tensor,
+            latent_pose: torch.Tensor,  # new add
 
-        class_labels: Optional[torch.Tensor] = None,
-        timestep_cond: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
-        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
-        mid_block_additional_residual: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        return_dict: bool = True,
+            class_labels: Optional[torch.Tensor] = None,
+            timestep_cond: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+            added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
+            down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
+            mid_block_additional_residual: Optional[torch.Tensor] = None,
+            encoder_attention_mask: Optional[torch.Tensor] = None,
+            return_dict: bool = True,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         The [`UNet2DConditionModel`] forward method.
@@ -57,7 +55,7 @@ class Hack_UNet2DConditionModel(UNet2DConditionModel):
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
         # However, the upsampling interpolation output size can be forced to fit any upsampling size
         # on the fly if necessary.
-        default_overall_up_factor = 2**self.num_upsamplers
+        default_overall_up_factor = 2 ** self.num_upsamplers
 
         # upsample size should be forwarded when sample is not a multiple of `default_overall_up_factor`
         forward_upsample_size = False
@@ -211,7 +209,7 @@ class Hack_UNet2DConditionModel(UNet2DConditionModel):
             image_embeds = added_cond_kwargs.get("image_embeds")
             encoder_hidden_states = self.encoder_hid_proj(image_embeds)
         # 2. pre-process
-        sample = self.conv_in(sample) 
+        sample = self.conv_in(sample)
 
         # add latent_pose
         sample = sample + latent_pose
@@ -257,7 +255,7 @@ class Hack_UNet2DConditionModel(UNet2DConditionModel):
             new_down_block_res_samples = ()
 
             for down_block_res_sample, down_block_additional_residual in zip(
-                down_block_res_samples, down_block_additional_residuals
+                    down_block_res_samples, down_block_additional_residuals
             ):
                 down_block_res_sample = down_block_res_sample + down_block_additional_residual
                 new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
@@ -276,9 +274,9 @@ class Hack_UNet2DConditionModel(UNet2DConditionModel):
             )
             # To support T2I-Adapter-XL
             if (
-                is_adapter
-                and len(down_block_additional_residuals) > 0
-                and sample.shape == down_block_additional_residuals[0].shape
+                    is_adapter
+                    and len(down_block_additional_residuals) > 0
+                    and sample.shape == down_block_additional_residuals[0].shape
             ):
                 sample += down_block_additional_residuals.pop(0)
 
@@ -289,7 +287,7 @@ class Hack_UNet2DConditionModel(UNet2DConditionModel):
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
-            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            res_samples = down_block_res_samples[-len(upsample_block.resnets):]
             down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
 
             # if we have not reached the final block and need to forward the

@@ -11,12 +11,12 @@
 import os
 import socket
 import warnings
+
 import torch
 from torch import distributed as dist
 
 
 def distributed_init(args):
-
     if dist.is_initialized():
         warnings.warn("Distributed is already initialized, cannot initialize twice!")
         args.rank = dist.get_rank()
@@ -40,13 +40,13 @@ def distributed_init(args):
             # Set for onboxdataloader support
             split = args.init_method.split("//")
             assert len(split) == 2, (
-                "host url for distributed should be split by '//' "
-                + "into exactly two elements"
+                    "host url for distributed should be split by '//' "
+                    + "into exactly two elements"
             )
 
             split = split[1].split(":")
             assert (
-                len(split) == 2
+                    len(split) == 2
             ), "host url should be of the form <host_url>:<host_port>"
             os.environ["MASTER_ADDR"] = split[0]
             os.environ["MASTER_PORT"] = split[1]

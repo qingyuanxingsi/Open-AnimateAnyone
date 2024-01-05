@@ -1,13 +1,12 @@
-import cv2
 import os
+
+import cv2
 from tqdm import tqdm
 
 dataset_folder = '../../TikTok_dataset'
-fps = 30 # tiktok dataset fps=30
+fps = 30  # tiktok dataset fps=30
 
 all_files = os.listdir(dataset_folder)
-
-
 
 for folder in tqdm(all_files):
     folder_path = os.path.join(dataset_folder, folder)

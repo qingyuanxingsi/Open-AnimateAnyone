@@ -6,21 +6,21 @@
 
 # Adapted from https://github.com/guoyww/AnimateDiff
 import os
+from typing import Union
+
 import imageio
 import numpy as np
-
 import torch
-import torchvision
-
-from PIL import Image
-from typing import Union
-from tqdm import tqdm
-from einops import rearrange
 import torch.distributed as dist
+import torchvision
+from PIL import Image
+from einops import rearrange
+from tqdm import tqdm
 
 
 def zero_rank_print(s):
     if (not dist.is_initialized()) and (dist.is_initialized() and dist.get_rank() == 0): print("### " + s)
+
 
 def save_videos_grid(videos: torch.Tensor, path: str, rescale=False, n_rows=6, fps=25):
     videos = rearrange(videos, "b c t h w -> t b c h w")
@@ -36,13 +36,15 @@ def save_videos_grid(videos: torch.Tensor, path: str, rescale=False, n_rows=6, f
     os.makedirs(os.path.dirname(path), exist_ok=True)
     imageio.mimsave(path, outputs, fps=fps)
 
+
 def save_images_grid(images: torch.Tensor, path: str):
-    assert images.shape[2] == 1 # no time dimension
+    assert images.shape[2] == 1  # no time dimension
     images = images.squeeze(2)
     grid = torchvision.utils.make_grid(images)
     grid = (grid * 255).numpy().transpose(1, 2, 0).astype(np.uint8)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     Image.fromarray(grid).save(path)
+
 
 # DDIM Inversion
 @torch.no_grad()
@@ -119,24 +121,28 @@ def images2video(video, path, fps=8):
 
 tensor_interpolation = None
 
+
 def get_tensor_interpolation_method():
     return tensor_interpolation
+
 
 def set_tensor_interpolation_method(is_slerp):
     global tensor_interpolation
     tensor_interpolation = slerp if is_slerp else linear
 
+
 def linear(v1, v2, t):
     return (1.0 - t) * v1 + t * v2
 
+
 def slerp(
-    v0: torch.Tensor, v1: torch.Tensor, t: float, DOT_THRESHOLD: float = 0.9995
+        v0: torch.Tensor, v1: torch.Tensor, t: float, DOT_THRESHOLD: float = 0.9995
 ) -> torch.Tensor:
     u0 = v0 / v0.norm()
     u1 = v1 / v1.norm()
     dot = (u0 * u1).sum()
     if dot.abs() > DOT_THRESHOLD:
-        #logger.info(f'warning: v0 and v1 close to parallel, using linear interpolation instead.')
+        # logger.info(f'warning: v0 and v1 close to parallel, using linear interpolation instead.')
         return (1.0 - t) * v0 + t * v1
     omega = dot.acos()
     return (((1.0 - t) * omega).sin() * v0 + (t * omega).sin() * v1) / omega.sin()

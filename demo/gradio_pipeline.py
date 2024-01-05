@@ -1,15 +1,13 @@
-import inspect, math
-from typing import Callable, List, Optional, Union
+import inspect
+import math
 from dataclasses import dataclass
-from PIL import Image
+from typing import Callable, List, Optional, Union
+
 import numpy as np
 import torch
 import torch.distributed as dist
-from tqdm import tqdm
-from diffusers.utils import is_accelerate_available
-from packaging import version
-from transformers import CLIPTextModel, CLIPTokenizer
-
+import torchvision.transforms as transforms
+from PIL import Image
 from diffusers.configuration_utils import FrozenDict
 from diffusers.models import AutoencoderKL
 from diffusers.pipeline_utils import DiffusionPipeline
@@ -22,21 +20,19 @@ from diffusers.schedulers import (
     PNDMScheduler,
 )
 from diffusers.utils import deprecate, logging, BaseOutput
-
+from diffusers.utils import is_accelerate_available
 from einops import rearrange
+from packaging import version
+from tqdm import tqdm
+from transformers import CLIPTextModel, CLIPTokenizer
 
-from pipelines.context import (
-    get_context_scheduler,
-    get_total_steps
-)
-from utils.util import get_tensor_interpolation_method
-
-from models.hack_unet3d import Hack_UNet3DConditionModel as UNet3DConditionModel
 # from models.ReferenceNet_attention import ReferenceNetAttention
 from models.ReferenceNet_attention_fp16 import ReferenceNetAttention
-
-
-import torchvision.transforms as transforms
+from models.hack_unet3d import HackUNet3DConditionModel as UNet3DConditionModel
+from pipelines.context import (
+    get_context_scheduler
+)
+from utils.util import get_tensor_interpolation_method
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -50,19 +46,19 @@ class AnimationAnyonePipeline(DiffusionPipeline):
     _optional_components = []
 
     def __init__(
-        self,
-        vae: AutoencoderKL,
-        text_encoder: CLIPTextModel,
-        tokenizer: CLIPTokenizer,
-        unet: UNet3DConditionModel,
-        scheduler: Union[
-            DDIMScheduler,
-            PNDMScheduler,
-            LMSDiscreteScheduler,
-            EulerDiscreteScheduler,
-            EulerAncestralDiscreteScheduler,
-            DPMSolverMultistepScheduler,
-        ],
+            self,
+            vae: AutoencoderKL,
+            text_encoder: CLIPTextModel,
+            tokenizer: CLIPTokenizer,
+            unet: UNet3DConditionModel,
+            scheduler: Union[
+                DDIMScheduler,
+                PNDMScheduler,
+                LMSDiscreteScheduler,
+                EulerDiscreteScheduler,
+                EulerAncestralDiscreteScheduler,
+                DPMSolverMultistepScheduler,
+            ],
     ):
         super().__init__()
         '''
@@ -150,16 +146,15 @@ class AnimationAnyonePipeline(DiffusionPipeline):
             if cpu_offloaded_model is not None:
                 cpu_offload(cpu_offloaded_model, device)
 
-
     @property
     def _execution_device(self):
         if self.device != torch.device("meta") or not hasattr(self.unet, "_hf_hook"):
             return self.device
         for module in self.unet.modules():
             if (
-                hasattr(module, "_hf_hook")
-                and hasattr(module._hf_hook, "execution_device")
-                and module._hf_hook.execution_device is not None
+                    hasattr(module, "_hf_hook")
+                    and hasattr(module._hf_hook, "execution_device")
+                    and module._hf_hook.execution_device is not None
             ):
                 return torch.device(module._hf_hook.execution_device)
         return self.device
@@ -178,7 +173,7 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
         if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
-            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer.model_max_length - 1 : -1])
+            removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer.model_max_length - 1: -1])
             logger.warning(
                 "The following part of your input was truncated because CLIP can only handle sequences up to"
                 f" {self.tokenizer.model_max_length} tokens: {removed_text}"
@@ -252,18 +247,18 @@ class AnimationAnyonePipeline(DiffusionPipeline):
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
 
         return text_embeddings
-    
+
     def decode_latents(self, latents, rank, decoder_consistency=None):
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
         latents = rearrange(latents, "b c f h w -> (b f) c h w")
         # video = self.vae.decode(latents).sample
         video = []
-        for frame_idx in tqdm(range(latents.shape[0]), disable=(rank!=0)):
+        for frame_idx in tqdm(range(latents.shape[0]), disable=(rank != 0)):
             if decoder_consistency is not None:
-                video.append(decoder_consistency(latents[frame_idx:frame_idx+1]))
+                video.append(decoder_consistency(latents[frame_idx:frame_idx + 1]))
             else:
-                video.append(self.vae.decode(latents[frame_idx:frame_idx+1]).sample)
+                video.append(self.vae.decode(latents[frame_idx:frame_idx + 1]).sample)
         video = torch.cat(video)
         video = rearrange(video, "(b f) c h w -> b c f h w", f=video_length)
         video = (video / 2 + 0.5).clamp(0, 1)
@@ -296,15 +291,17 @@ class AnimationAnyonePipeline(DiffusionPipeline):
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if (callback_steps is None) or (
-            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
+                callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
         ):
             raise ValueError(
                 f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
                 f" {type(callback_steps)}."
             )
-    
-    def prepare_latents(self, batch_size, num_channels_latents, video_length, height, width, dtype, device, generator, latents=None, clip_length=16):
-        shape = (batch_size, num_channels_latents, clip_length, height // self.vae_scale_factor, width // self.vae_scale_factor)
+
+    def prepare_latents(self, batch_size, num_channels_latents, video_length, height, width, dtype, device, generator,
+                        latents=None, clip_length=16):
+        shape = (
+        batch_size, num_channels_latents, clip_length, height // self.vae_scale_factor, width // self.vae_scale_factor)
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
@@ -321,8 +318,8 @@ class AnimationAnyonePipeline(DiffusionPipeline):
                 latents = torch.cat(latents, dim=0).to(device)
             else:
                 latents = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype).to(device)
-                
-            latents = latents.repeat(1, 1, video_length//clip_length, 1, 1)
+
+            latents = latents.repeat(1, 1, video_length // clip_length, 1, 1)
         else:
             if latents.shape != shape:
                 raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
@@ -331,7 +328,7 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
-    
+
     @torch.no_grad()
     def images2latents(self, images, dtype):
         """
@@ -342,86 +339,86 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         images = rearrange(images, "f h w c -> f c h w").to(device)
         latents = []
         for frame_idx in range(images.shape[0]):
-            latents.append(self.vae.encode(images[frame_idx:frame_idx+1])['latent_dist'].mean * 0.18215)
+            latents.append(self.vae.encode(images[frame_idx:frame_idx + 1])['latent_dist'].mean * 0.18215)
         latents = torch.cat(latents)
         return latents
-    
-    
-    def interpolate_latents(self, latents: torch.Tensor, interpolation_factor:int, device ):
+
+    def interpolate_latents(self, latents: torch.Tensor, interpolation_factor: int, device):
         if interpolation_factor < 2:
             return latents
 
         new_latents = torch.zeros(
-                    (latents.shape[0],latents.shape[1],((latents.shape[2]-1) * interpolation_factor)+1, latents.shape[3],latents.shape[4]),
-                    device=latents.device,
-                    dtype=latents.dtype,
-                )
+            (latents.shape[0], latents.shape[1], ((latents.shape[2] - 1) * interpolation_factor) + 1, latents.shape[3],
+             latents.shape[4]),
+            device=latents.device,
+            dtype=latents.dtype,
+        )
 
         org_video_length = latents.shape[2]
-        rate = [i/interpolation_factor for i in range(interpolation_factor)][1:]
+        rate = [i / interpolation_factor for i in range(interpolation_factor)][1:]
 
         new_index = 0
 
         v0 = None
         v1 = None
 
-        for i0,i1 in zip( range( org_video_length ),range( org_video_length )[1:] ):
-            v0 = latents[:,:,i0,:,:]
-            v1 = latents[:,:,i1,:,:]
+        for i0, i1 in zip(range(org_video_length), range(org_video_length)[1:]):
+            v0 = latents[:, :, i0, :, :]
+            v1 = latents[:, :, i1, :, :]
 
-            new_latents[:,:,new_index,:,:] = v0
+            new_latents[:, :, new_index, :, :] = v0
             new_index += 1
 
             for f in rate:
-                v = get_tensor_interpolation_method()(v0.to(device=device),v1.to(device=device),f)
-                new_latents[:,:,new_index,:,:] = v.to(latents.device)
+                v = get_tensor_interpolation_method()(v0.to(device=device), v1.to(device=device), f)
+                new_latents[:, :, new_index, :, :] = v.to(latents.device)
                 new_index += 1
 
-        new_latents[:,:,new_index,:,:] = v1
+        new_latents[:, :, new_index, :, :] = v1
         new_index += 1
 
         return new_latents
-    
+
     @torch.no_grad()
     def __call__(
-        self,
-        prompt: Union[str, List[str]],
-        video_length: Optional[int],
-        height: Optional[int] = None,
-        width: Optional[int] = None,
-        num_inference_steps: int = 50,
-        guidance_scale: float = 7.5,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        num_videos_per_prompt: Optional[int] = 1,
-        eta: float = 0.0,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.FloatTensor] = None,
-        output_type: Optional[str] = "tensor",
-        return_dict: bool = True,
-        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: Optional[int] = 1,
-        controlnet_condition: Optional[list] = None,
-        controlnet_conditioning_scale: Optional[float] = None,
-        context_frames: int = 16,
-        context_stride: int = 1,
-        context_overlap: int = 4,
-        context_batch_size: int = 1, 
-        context_schedule: str = "uniform",
-        init_latents: Optional[torch.FloatTensor] = None,
-        num_actual_inference_steps: Optional[int] = None,
-        
-        referencenet = None,
-        poseguider = None,
-        clip_image_processor = None,
-        clip_image_encoder = None,
-        pose_condition = None,
-        
-        # appearance_encoder = None, 
-        reference_control_writer = None,
-        reference_control_reader = None,
-        source_image: str = None,
-        decoder_consistency = None, 
-        **kwargs,
+            self,
+            prompt: Union[str, List[str]],
+            video_length: Optional[int],
+            height: Optional[int] = None,
+            width: Optional[int] = None,
+            num_inference_steps: int = 50,
+            guidance_scale: float = 7.5,
+            negative_prompt: Optional[Union[str, List[str]]] = None,
+            num_videos_per_prompt: Optional[int] = 1,
+            eta: float = 0.0,
+            generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+            latents: Optional[torch.FloatTensor] = None,
+            output_type: Optional[str] = "tensor",
+            return_dict: bool = True,
+            callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+            callback_steps: Optional[int] = 1,
+            controlnet_condition: Optional[list] = None,
+            controlnet_conditioning_scale: Optional[float] = None,
+            context_frames: int = 16,
+            context_stride: int = 1,
+            context_overlap: int = 4,
+            context_batch_size: int = 1,
+            context_schedule: str = "uniform",
+            init_latents: Optional[torch.FloatTensor] = None,
+            num_actual_inference_steps: Optional[int] = None,
+
+            referencenet=None,
+            poseguider=None,
+            clip_image_processor=None,
+            clip_image_encoder=None,
+            pose_condition=None,
+
+            # appearance_encoder = None,
+            reference_control_writer=None,
+            reference_control_reader=None,
+            source_image: str = None,
+            decoder_consistency=None,
+            **kwargs,
     ):
 
         # Default height and width to unet
@@ -453,17 +450,23 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         #     prompt, device, num_videos_per_prompt, do_classifier_free_guidance, negative_prompt
         # )
         # text_embeddings = torch.cat([text_embeddings] * context_batch_size)
-        
-        reference_control_writer = ReferenceNetAttention(referencenet, do_classifier_free_guidance=do_classifier_free_guidance, mode='write', fusion_blocks="full", batch_size=context_batch_size, is_image=False,)
-        reference_control_reader = ReferenceNetAttention(self.unet, do_classifier_free_guidance=do_classifier_free_guidance, mode='read', fusion_blocks="full", batch_size=context_batch_size, is_image=False,)
-        
+
+        reference_control_writer = ReferenceNetAttention(referencenet,
+                                                         do_classifier_free_guidance=do_classifier_free_guidance,
+                                                         mode='write', fusion_blocks="full",
+                                                         batch_size=context_batch_size, is_image=False, )
+        reference_control_reader = ReferenceNetAttention(self.unet,
+                                                         do_classifier_free_guidance=do_classifier_free_guidance,
+                                                         mode='read', fusion_blocks="full",
+                                                         batch_size=context_batch_size, is_image=False, )
+
         is_dist_initialized = kwargs.get("dist", False)
         rank = kwargs.get("rank", 0)
         world_size = kwargs.get("world_size", 1)
 
         # Prepare video
-        assert num_videos_per_prompt == 1   # FIXME: verify if num_videos_per_prompt > 1 works
-        assert batch_size == 1              # FIXME: verify if batch_size > 1 works
+        assert num_videos_per_prompt == 1  # FIXME: verify if num_videos_per_prompt > 1 works
+        assert batch_size == 1  # FIXME: verify if batch_size > 1 works
 
         # Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -496,20 +499,24 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         # For img2img setting
         if num_actual_inference_steps is None:
             num_actual_inference_steps = num_inference_steps
-        
+
         if isinstance(source_image, str):
-            ref_image_latents = self.images2latents(np.array(Image.open(source_image).resize((width, height)))[None, :], latents_dtype).cuda()
-            clip_ref_image = clip_image_processor(images=Image.open(source_image).convert('RGB'), return_tensors="pt").pixel_values
-        
+            ref_image_latents = self.images2latents(np.array(Image.open(source_image).resize((width, height)))[None, :],
+                                                    latents_dtype).cuda()
+            clip_ref_image = clip_image_processor(images=Image.open(source_image).convert('RGB'),
+                                                  return_tensors="pt").pixel_values
+
         elif isinstance(source_image, np.ndarray):
             ref_image_latents = self.images2latents(source_image[None, :], latents_dtype).cuda()
-            clip_ref_image = clip_image_processor(images=Image.fromarray(source_image).convert('RGB'), return_tensors="pt").pixel_values
-        
+            clip_ref_image = clip_image_processor(images=Image.fromarray(source_image).convert('RGB'),
+                                                  return_tensors="pt").pixel_values
+
         # prepare clip image embedding
         # adapt from https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_video_diffusion/pipeline_stable_video_diffusion.py#L115
         clip_image_encoder.to(device=latents.device)
         clip_ref_image = clip_ref_image.to(device=latents.device)
-        image_embeddings = clip_image_encoder(clip_ref_image).unsqueeze(1).to(device=latents.device,dtype=latents.dtype)
+        image_embeddings = clip_image_encoder(clip_ref_image).unsqueeze(1).to(device=latents.device,
+                                                                              dtype=latents.dtype)
         clip_image_encoder.to('cpu')
         bs_embed, seq_len, _ = image_embeddings.shape
         image_embeddings = image_embeddings.repeat(1, num_videos_per_prompt, 1)
@@ -517,21 +524,21 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         if do_classifier_free_guidance:
             negative_image_embeddings = torch.zeros_like(image_embeddings)
             image_embeddings = torch.cat([negative_image_embeddings, image_embeddings])
-        
-        
+
         #### pose condition ####
         pixel_transforms = transforms.Compose([
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
         ])
-        
-        pose_condition = torch.from_numpy(pose_condition.copy()).to(device=device, dtype=latents.dtype).permute(0, 3, 1, 2) / 255.0
+
+        pose_condition = torch.from_numpy(pose_condition.copy()).to(device=device, dtype=latents.dtype).permute(0, 3, 1,
+                                                                                                                2) / 255.0
         # latent pose
         pose_condition = pixel_transforms(pose_condition)
 
         batch_size = 12
         latents_pose = []
         for i in range(0, len(pose_condition), batch_size):
-            batch_pose_condition = pose_condition[i:i+batch_size]
+            batch_pose_condition = pose_condition[i:i + batch_size]
             batch_latents_pose = poseguider(batch_pose_condition)
             latents_pose.append(batch_latents_pose)
 
@@ -541,11 +548,11 @@ class AnimationAnyonePipeline(DiffusionPipeline):
         latents_pose = rearrange(latents_pose, "(b f) c h w -> b c f h w", f=video_length)
         # if do_classifier_free_guidance: latents_pose = latents_pose.repeat(2,1,1,1,1)
         #### pose condition ####
-        
+
         context_scheduler = get_context_scheduler(context_schedule)
-        
+
         # Denoising loop
-        for i, t in tqdm(enumerate(timesteps), total=len(timesteps), disable=(rank!=0)):
+        for i, t in tqdm(enumerate(timesteps), total=len(timesteps), disable=(rank != 0)):
             if num_actual_inference_steps is not None and i < num_inference_steps - num_actual_inference_steps:
                 continue
 
@@ -570,8 +577,7 @@ class AnimationAnyonePipeline(DiffusionPipeline):
                 reference_control_reader.update(reference_control_writer)
                 # Put it on the cpu when it is not needed to save memory.
                 referencenet.to('cpu')
-            
-            
+
             context_queue = list(context_scheduler(
                 0, num_inference_steps, latents.shape[2], context_frames, context_stride, 0
             ))
@@ -584,9 +590,8 @@ class AnimationAnyonePipeline(DiffusionPipeline):
             num_context_batches = math.ceil(len(context_queue) / context_batch_size)
             global_context = []
             for i in range(num_context_batches):
-                global_context.append(context_queue[i*context_batch_size: (i+1)*context_batch_size])
+                global_context.append(context_queue[i * context_batch_size: (i + 1) * context_batch_size])
             # print(f"global_context:{global_context}")
-            
 
             for context in global_context[rank::world_size]:
                 # expand the latents if we are doing classifier free guidance
@@ -598,28 +603,28 @@ class AnimationAnyonePipeline(DiffusionPipeline):
 
                 # print(f"context:{context}")
                 # print(f"latent_model_input.size():{latent_model_input.size()}")
-                
+
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 b, c, f, h, w = latent_model_input.shape
 
-                latents_pose_input = torch.cat([latents_pose[:,:,c] for c in context]).repeat(2 if do_classifier_free_guidance else 1, 1, 1, 1, 1)
+                latents_pose_input = torch.cat([latents_pose[:, :, c] for c in context]).repeat(
+                    2 if do_classifier_free_guidance else 1, 1, 1, 1, 1)
 
                 pred = self.unet(
-                    latent_model_input, 
-                    t, 
+                    latent_model_input,
+                    t,
                     encoder_hidden_states=image_embeddings[:b],
                     latent_pose=latents_pose_input,
                     return_dict=False,
                 )[0]
 
-                
                 pred_uc, pred_c = pred.chunk(2)
                 pred = torch.cat([pred_uc.unsqueeze(0), pred_c.unsqueeze(0)])
                 for j, c in enumerate(context):
                     noise_pred[:, :, c] = noise_pred[:, :, c] + pred[:, j]
                     counter[:, :, c] = counter[:, :, c] + 1
-                    
+
             if is_dist_initialized:
                 noise_pred_gathered = [torch.zeros_like(noise_pred) for _ in range(world_size)]
                 if rank == 0:
@@ -632,7 +637,7 @@ class AnimationAnyonePipeline(DiffusionPipeline):
                     for k in range(1, world_size):
                         for context in global_context[k::world_size]:
                             for j, c in enumerate(context):
-                                noise_pred[:, :, c] = noise_pred[:, :, c] + noise_pred_gathered[k][:, :, c] 
+                                noise_pred[:, :, c] = noise_pred[:, :, c] + noise_pred_gathered[k][:, :, c]
                                 counter[:, :, c] = counter[:, :, c] + 1
 
             # perform guidance
@@ -642,12 +647,11 @@ class AnimationAnyonePipeline(DiffusionPipeline):
 
             # compute the previous noisy sample x_t -> x_t-1
             latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
-            
+
             if is_dist_initialized:
                 dist.broadcast(latents, 0)
                 dist.barrier()
-            
-        
+
         # interpolation_factor = 1
         # latents = self.interpolate_latents(latents, interpolation_factor, device)
         # Post-processing
@@ -662,5 +666,5 @@ class AnimationAnyonePipeline(DiffusionPipeline):
 
         if not return_dict:
             return video
-        
+
         return AnimationPipelineOutput(videos=video)

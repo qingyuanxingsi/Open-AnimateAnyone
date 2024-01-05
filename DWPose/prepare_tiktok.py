@@ -1,8 +1,10 @@
 import os
+
 import cv2
-import torch
 import numpy as np
+import torch
 from tqdm import tqdm
+
 from dwpose_utils import DWposeDetector
 
 
@@ -39,7 +41,6 @@ def resize_image(input_image, resolution):
 
 
 def process(dwprocessor, input_image, detect_resolution):
-
     if not isinstance(dwprocessor, DWposeDetector):
         dwprocessor = DWposeDetector()
 
@@ -71,7 +72,7 @@ for folder in tqdm(all_files):
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
 
-        for image_name in tqdm(os.listdir(image_folder),desc=f"process {folder}"):
+        for image_name in tqdm(os.listdir(image_folder), desc=f"process {folder}"):
             image_path = os.path.join(image_folder, image_name)
             output_path = os.path.join(output_folder, image_name)
 

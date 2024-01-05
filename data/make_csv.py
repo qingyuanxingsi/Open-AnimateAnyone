@@ -1,5 +1,5 @@
-import os
 import csv
+import os
 
 dataset_folder = '../../TikTok_dataset'
 csv_path = 'TikTok_info.csv'
@@ -19,7 +19,7 @@ with open(csv_path, 'w', newline='') as csvfile:
     writer.writeheader()
     for i, folder in enumerate(os.listdir(dataset_folder)):
         folder_path = os.path.join(dataset_folder, folder)
-        writer.writerow({'folder_id': i+1, 'folder_name': folder.split(".")[0]})
+        writer.writerow({'folder_id': i + 1, 'folder_name': folder.split(".")[0]})
 
 # def test(csv_path):
 #     with open(csv_path, 'r') as csvfile:
