@@ -8,10 +8,9 @@ from .onnxpose import inference_pose
 class Wholebody:
     def __init__(self):
         device = 'cuda:0'
-        providers = ['CPUExecutionProvider'
-                     ] if device == 'cpu' else ['CUDAExecutionProvider']
-        onnx_det = './dwpose_ckpts/yolox_l.onnx'
-        onnx_pose = './dwpose_ckpts/dw-ll_ucoco_384.onnx'
+        providers = ['CPUExecutionProvider'] if device == 'cpu' else ['CUDAExecutionProvider']
+        onnx_det = './ckpts/DWPose/yolox_l.onnx'
+        onnx_pose = './ckpts/DWPose/dw-ll_ucoco_384.onnx'
 
         self.session_det = ort.InferenceSession(path_or_bytes=onnx_det, providers=providers)
         self.session_pose = ort.InferenceSession(path_or_bytes=onnx_pose, providers=providers)

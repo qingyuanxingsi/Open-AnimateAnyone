@@ -38,7 +38,7 @@ def process(dwprocessor, input_image, detect_resolution):
 
 
 dwprocessor = DWposeDetector()
-dataset_folder = '../../UBC_dataset'
+dataset_folder = 'datasets/UBC_dataset'
 sub_folders = ['train', 'test']
 detect_resolution = 768
 
