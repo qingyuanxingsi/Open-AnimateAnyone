@@ -1,14 +1,11 @@
 import csv
 import os
 
-dataset_folder = '../../TikTok_dataset'
-csv_path = 'TikTok_info.csv'
-
 dataset_folder = 'datasets/UBC_dataset'
 splits = ['train','test']
 
 for split in splits:
-    out_path = os.path.join(dataset_folder, f'{split}_info.csv')
+    csv_path = os.path.join(dataset_folder, f'{split}_info.csv')
     split_folder = os.path.join(dataset_folder, split)
     with open(csv_path, 'w', newline='') as csvfile:
         fieldnames = ['folder_id', 'folder_name']
