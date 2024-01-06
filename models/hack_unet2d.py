@@ -6,7 +6,7 @@ import torch.utils.checkpoint
 from diffusers.models.unet_2d_condition import UNet2DConditionModel, UNet2DConditionOutput, logger
 
 
-class Hack_UNet2DConditionModel(UNet2DConditionModel):
+class HackUNet2DConditionModel(UNet2DConditionModel):
     def forward(
             self,
             sample: torch.FloatTensor,

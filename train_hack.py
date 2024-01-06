@@ -31,7 +31,7 @@ from models.ReferenceNet_attention import ReferenceNetAttention
 # from models.PoseGuider import PoseGuider
 from models.hack_poseguider import Hack_PoseGuider as PoseGuider
 # from diffusers.models import UNet2DConditionModel
-from models.hack_unet2d import Hack_UNet2DConditionModel as UNet2DConditionModel
+from models.hack_unet2d import HackUNet2DConditionModel as UNet2DConditionModel
 # from models.unet import UNet3DConditionModel
 from models.hack_unet3d import HackUNet3DConditionModel as UNet3DConditionModel
 # from animatediff.pipelines.pipeline_animation import AnimationPipeline
