@@ -37,8 +37,8 @@ unet_additional_kwargs:
 
 train_data:
   # csv_path:     "./data/UBC_train_info_test.csv"
-  csv_path:     "./data/UBC_train_info.csv"
-  video_folder: "./UBC_dataset"
+  csv_path:     "./datasets/UBC_dataset/train_info.csv"
+  video_folder: "./datasets/UBC_dataset"
   sample_size:  512 # for 40G 256
   sample_stride: 4
   sample_n_frames: 16
