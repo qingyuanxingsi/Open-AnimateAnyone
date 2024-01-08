@@ -23,3 +23,4 @@ torchrun \
     --node_rank ${RANK} \
     train_hack.py \
     --config configs/training/train_stage_1.yaml
+    --wandb
