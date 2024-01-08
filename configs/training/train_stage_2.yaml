@@ -4,8 +4,8 @@ output_dir: "outputs"
 pretrained_model_path: "./pretrained_models/stable-diffusion-v1-5"
 clip_model_path: "./pretrained_models/clip-vit-base-patch32"
 # clip_model_path: "../magic-animate/pretrained_models/clip-vit-large-patch14"
-poseguider_checkpoint_path: "your poseguider's path"
-referencenet_checkpoint_path: "your referencenet's path"
+poseguider_checkpoint_path: "./outputs/train_stage_1-2024-01-07T20-51-36/checkpoints/checkpoint-global_step-60000.ckpt"
+referencenet_checkpoint_path: "./outputs/train_stage_1-2024-01-07T20-51-36/checkpoints/checkpoint-global_step-60000.ckpt"
 
 
 unet_additional_kwargs:
@@ -36,12 +36,12 @@ noise_scheduler_kwargs:
 description: "train stage 2: video motion train"
 
 train_data:
-  csv_path:     "/mnt/f/research/HumanVideo/AnimateAnyone-unofficial/data/TikTok_info.csv"
-  video_folder: "/mnt/f/research/HumanVideo/TikTok_dataset"
+  csv_path:     "datasets/UBC_dataset/train_info.csv"
+  video_folder: "datasets/UBC_dataset"
   sample_size:  512
   sample_stride: 4
   sample_n_frames: 16
-  clip_model_path: "/mnt/f/research/HumanVideo/magic-animate/pretrained_models/clip-vit-base-patch32"
+  clip_model_path: "./pretrained_models/clip-vit-base-patch32"
 
 validation_data:
   prompts:
